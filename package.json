@@ -1,0 +1,13 @@
+{
+  "name": "royal-poker",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Texas Hold'em online — Vercel (frontend) + Supabase (auth, DB, realtime, edge function)",
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:api": "node --test test/api.integration.test.js",
+    "test:fuzz": "node --test test/fuzz.test.js",
+    "dev": "npx serve public -l 5173"
+  }
+}
