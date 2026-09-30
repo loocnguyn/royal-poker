@@ -530,19 +530,64 @@ input, select { font: inherit; color: inherit; }
   .table-top .icon-btn { padding: 6px 8px; }
 }
 /* ───────── voice chat ───────── */
-.voice-ctl { display: flex; align-items: center; gap: 6px; }
-.voice-ctl svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.voice-ctl .voice-join { display: inline-flex; align-items: center; gap: 6px; }
+.bottom-row { display: flex; align-items: flex-end; gap: 10px; padding-left: 12px; }
+.bottom-row .dock { flex: 1; min-width: 0; }
+.voice-bar {
+  flex: none; width: 258px; margin-bottom: calc(10px + env(safe-area-inset-bottom));
+  display: grid; gap: 9px; padding: 10px; border-radius: 14px;
+  background: var(--panel-solid); border: 1px solid var(--line-2); box-shadow: 0 10px 30px rgba(0,0,0,.4);
+}
+.voice-bar svg, .voice-menu svg, .vp-state svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.vb-info { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.vb-ava .avatar { width: 34px; height: 34px; font-size: 13px; transition: box-shadow .12s; }
+.vb-ava.speaking .avatar { box-shadow: 0 0 0 2px #22c55e, 0 0 12px rgba(34,197,94,.5); }
+.vb-text { min-width: 0; display: grid; line-height: 1.25; }
+.vb-text b { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vb-text small { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vb-text small.ok { color: #4ade80; }
+.vb-btns { display: flex; align-items: center; gap: 6px; }
+.vb-btns .vb-join { width: 100%; }
+.vgroup { display: flex; border-radius: 10px; overflow: hidden; border: 1px solid var(--line-2); }
 .vbtn {
-  display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px;
+  display: grid; place-items: center; width: 38px; height: 36px; border-radius: 10px;
   background: rgba(255,255,255,.06); border: 1px solid var(--line-2); color: var(--text); cursor: pointer;
   transition: background .15s, color .15s;
 }
+.vbtn svg { width: 18px; height: 18px; }
+.vgroup .vbtn { border: 0; border-radius: 0; }
 .vbtn:hover { background: rgba(255,255,255,.12); }
-.vbtn.off { background: rgba(229,72,77,.18); border-color: rgba(229,72,77,.45); color: #ff8a8e; }
-.vbtn.leave { background: rgba(229,72,77,.85); border-color: transparent; color: #fff; }
+.vbtn.off { background: rgba(229,72,77,.18); color: #ff8a8e; }
+.vbtn.leave { margin-left: auto; background: rgba(229,72,77,.85); border-color: transparent; color: #fff; }
 .vbtn.leave:hover { background: var(--red); }
 .vbtn .slash, .vp-state .slash { stroke: #ff6b70; }
+.vcaret {
+  display: grid; place-items: center; width: 22px; padding: 0; cursor: pointer;
+  background: rgba(255,255,255,.06); border: 0; border-left: 1px solid var(--line-2); color: var(--muted);
+}
+.vcaret svg { width: 14px; height: 14px; transition: transform .15s; }
+.vcaret:hover, .vcaret.open { background: rgba(255,255,255,.14); color: var(--text); }
+.vcaret.open svg { transform: rotate(180deg); }
+
+.voice-menu {
+  position: fixed; z-index: 70; width: 290px; max-height: 70vh; overflow: auto; padding: 12px;
+  background: var(--panel-solid); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: var(--shadow);
+  animation: popIn .15s ease both;
+}
+.voice-menu h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.vm-list { display: grid; gap: 2px; margin-bottom: 10px; }
+.vm-opt {
+  text-align: left; padding: 8px 10px 8px 30px; border-radius: 8px; border: 0; background: none; color: var(--text);
+  font: inherit; font-size: 13.5px; cursor: pointer; position: relative; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vm-opt:hover { background: rgba(255,255,255,.07); }
+.vm-opt::before { content: ''; position: absolute; left: 10px; top: 50%; width: 12px; height: 12px; margin-top: -6px; border-radius: 50%; border: 2px solid var(--line-2); }
+.vm-opt.on::before { border-color: var(--gold); background: radial-gradient(circle, var(--gold) 45%, transparent 50%); }
+.vm-range { display: grid; gap: 6px; font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
+.vm-range b { color: var(--text); font-weight: 700; }
+.vm-range input { width: 100%; accent-color: var(--gold); }
+.vm-meter { height: 6px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; }
+.vm-meter i { display: block; height: 100%; width: 0; background: #22c55e; transition: width .08s linear; }
+.vm-hint { display: block; margin: 6px 0 0; font-size: 12px; color: var(--muted); }
 
 .voice-panel { padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .voice-panel .vp-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
@@ -553,7 +598,8 @@ input, select { font: inherit; color: inherit; }
 .voice-panel li.speaking .vp-ava .avatar { box-shadow: 0 0 0 2px #22c55e; }
 .voice-panel .vp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .voice-panel .vp-name small { color: var(--muted); }
-.vp-state svg { width: 15px; height: 15px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.vp-state { color: var(--muted); }
+.vp-state svg { width: 15px; height: 15px; display: block; }
 
 .seat[data-voice="speaking"] .ava-wrap .avatar { box-shadow: 0 0 0 3px #22c55e, 0 0 18px rgba(34,197,94,.6); }
 .seat[data-voice="muted"] .ava-wrap::after {
@@ -561,9 +607,11 @@ input, select { font: inherit; color: inherit; }
   background: #e5484d url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3'/%3E%3Cpath d='M5.5 11a6.5 6.5 0 0 0 13 0M4 4l16 16'/%3E%3C/svg%3E") center / 13px no-repeat;
   border: 2px solid #1b2130; z-index: 3;
 }
-@media (max-width: 640px) {
-  .voice-ctl .voice-join span { display: none; }
-  .vbtn { width: 32px; height: 32px; }
+@media (max-width: 900px) {
+  .bottom-row { flex-direction: column; align-items: stretch; gap: 0; padding: 0 12px; }
+  .bottom-row .dock { padding-left: 0; padding-right: 0; }
+  .voice-bar { width: auto; margin: 6px 0 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 8px 10px; }
+  .vb-btns .vb-join { width: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

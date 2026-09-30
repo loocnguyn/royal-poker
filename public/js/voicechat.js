@@ -7,13 +7,13 @@ const SPEAK_LEVEL = 0.035; // ngưỡng RMS (micro của mình) coi là đang n�
 const REMOTE_SPEAK_LEVEL = 0.03; // ngưỡng audioLevel trong thống kê WebRTC (người khác)
 const SPEAK_HOLD_MS = 350;
 const PREFS_KEY = 'rp-voice-v1';
+const DEFAULT_PREFS = { muted: false, deafened: false, inputId: '', outputId: '', inputGain: 1, outputVolume: 1 };
 
 function loadPrefs() {
-  try { return { muted: false, deafened: false, ...JSON.parse(localStorage.getItem(PREFS_KEY)) }; } catch { return { muted: false, deafened: false }; }
+  try { return { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(PREFS_KEY)) }; } catch { return { ...DEFAULT_PREFS }; }
 }
-function savePrefs(p) {
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* không sao */ }
-}
+
+let warnedNoMic = false;
 
 export class VoiceChat {
   /**
@@ -30,22 +30,38 @@ export class VoiceChat {
     this.joined = false;
     this.joining = false;
     this.error = '';
-    const prefs = loadPrefs();
-    this.muted = prefs.muted;
-    this.deafened = prefs.deafened;
+    this.prefs = loadPrefs();
     this.noMic = false;
-    this.stream = null;
+    this.rawStream = null; // luồng từ micro
+    this.chain = null; // { src, gain, dest } khi chỉnh âm lượng mic khác 100%
     this.ctx = null;
     this.localMeter = null;
-    this.peers = new Map(); // userId -> { pc, audio, meter, pending: [] }
+    this.locked = false; // trình duyệt chưa cho phát tiếng (chưa có thao tác nào trên trang)
+    this.peers = new Map(); // userId -> { pc, audio, level, pending: [], sender }
     this.members = new Map(); // userId -> { id, name, picture, muted, deafened, noMic }
     this.speaking = new Map(); // userId -> thời điểm cuối cùng nghe thấy tiếng
     this.meterTimer = null;
     window.addEventListener('pagehide', () => this.setRoom(null));
+    const unlock = () => this.unlock();
+    window.addEventListener('pointerdown', unlock, true);
+    window.addEventListener('keydown', unlock, true);
+    navigator.mediaDevices?.addEventListener?.('devicechange', () => this.emit());
   }
 
   get supported() {
     return !!(navigator.mediaDevices?.getUserMedia && window.RTCPeerConnection);
+  }
+
+  get muted() { return this.prefs.muted; }
+  get deafened() { return this.prefs.deafened; }
+
+  /** Mic thật sự phát khi: có micro, không tắt mic, không tắt loa. */
+  get micLive() {
+    return !!this.rawStream && !this.prefs.muted && !this.prefs.deafened;
+  }
+
+  get canPickOutput() {
+    return typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype;
   }
 
   snapshot() {
@@ -55,21 +71,26 @@ export class VoiceChat {
       room: this.room,
       joined: this.joined,
       joining: this.joining,
-      muted: this.muted,
-      deafened: this.deafened,
+      muted: this.prefs.muted,
+      deafened: this.prefs.deafened,
       noMic: this.noMic,
+      locked: this.locked,
       error: this.error,
+      connecting: [...this.peers.values()].some((p) => p.pc.connectionState !== 'connected'),
       members: [...this.members.values()].map((m) => ({
         ...m,
         me: m.id === me,
         speaking: (this.speaking.get(m.id) || 0) > now - SPEAK_HOLD_MS,
-        connected: m.id === me ? this.joined : this.peers.get(m.id)?.pc.connectionState === 'connected',
       })),
     };
   }
 
   emit() {
     this.onChange?.(this.snapshot());
+  }
+
+  savePrefs() {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(this.prefs)); } catch { /* không sao */ }
   }
 
   // ───────── phòng (bàn) ─────────
@@ -98,22 +119,12 @@ export class VoiceChat {
     this.error = '';
     this.emit();
     const room = this.room;
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      this.noMic = false;
-    } catch {
-      // Không có micro hoặc bị chặn quyền: vẫn cho vào để nghe.
-      this.stream = null;
-      this.noMic = true;
-      this.error = 'Không dùng được micro (chưa cấp quyền hoặc không có micro). Bạn vẫn nghe được.';
-    }
-    if (room !== this.room) { this.stopStream(); this.joining = false; return; }
+    await this.openMic();
+    if (room !== this.room) { this.closeMic(); this.joining = false; this.emit(); return; }
     this.ctx = new (window.AudioContext || window.webkitAudioContext)();
     await this.ctx.resume?.().catch(() => {});
-    if (this.stream) this.localMeter = this.meter(this.stream);
-    this.applyLocalTrack();
+    this.locked = this.ctx.state !== 'running';
+    this.rebuildChain();
     this.joined = true;
     this.joining = false;
     await this.track();
@@ -127,76 +138,173 @@ export class VoiceChat {
     this.joining = false;
     for (const id of [...this.peers.keys()]) this.dropPeer(id);
     this.channel?.untrack().catch(() => {});
-    this.stopStream();
+    this.closeMic();
     clearInterval(this.meterTimer);
     this.meterTimer = null;
     this.ctx?.close().catch(() => {});
     this.ctx = null;
+    this.chain = null;
     this.localMeter = null;
     this.speaking.clear();
     this.emit();
   }
 
-  stopStream() {
-    this.stream?.getTracks().forEach((t) => t.stop());
-    this.stream = null;
+  /** Bật micro theo thiết bị đã chọn. Không có micro / bị chặn thì vẫn vào để nghe. */
+  async openMic() {
+    const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    const want = this.prefs.inputId;
+    try {
+      this.rawStream = await navigator.mediaDevices.getUserMedia({ audio: want ? { ...audio, deviceId: { exact: want } } : audio })
+        .catch((e) => {
+          if (!want) throw e;
+          this.prefs.inputId = ''; // micro đã chọn không còn: quay về mặc định
+          return navigator.mediaDevices.getUserMedia({ audio });
+        });
+      this.noMic = false;
+    } catch {
+      this.rawStream = null;
+      this.noMic = true;
+      if (!warnedNoMic) {
+        warnedNoMic = true;
+        this.error = 'Không dùng được micro (chưa cấp quyền hoặc không có micro). Bạn vẫn nghe được.';
+      }
+    }
+  }
+
+  closeMic() {
+    this.rawStream?.getTracks().forEach((t) => t.stop());
+    this.rawStream = null;
+    this.chain?.src.disconnect();
+  }
+
+  /** Luồng gửi đi: micro gốc, hoặc qua bộ khuếch đại khi âm lượng mic khác 100%. */
+  rebuildChain() {
+    this.chain?.src.disconnect();
+    this.chain = null;
+    this.localMeter = null;
+    if (!this.rawStream || !this.ctx) { this.applyLocalTrack(); return; }
+    this.localMeter = this.meter(this.rawStream);
+    if (this.prefs.inputGain !== 1) {
+      const src = this.ctx.createMediaStreamSource(this.rawStream);
+      const gain = this.ctx.createGain();
+      gain.gain.value = this.prefs.inputGain;
+      const dest = this.ctx.createMediaStreamDestination();
+      src.connect(gain).connect(dest);
+      this.chain = { src, gain, dest };
+    }
+    this.applyLocalTrack();
+    for (const p of this.peers.values()) p.sender?.replaceTrack(this.sendTrack());
+  }
+
+  sendTrack() {
+    return (this.chain ? this.chain.dest.stream : this.rawStream)?.getAudioTracks()[0] || null;
+  }
+
+  applyLocalTrack() {
+    const live = this.micLive;
+    this.rawStream?.getAudioTracks().forEach((t) => { t.enabled = live; });
+    this.chain?.dest.stream.getAudioTracks().forEach((t) => { t.enabled = live; });
+  }
+
+  /** Trình duyệt chặn phát tiếng khi chưa có thao tác nào: thử lại ở lần bấm/gõ đầu tiên. */
+  unlock() {
+    if (!this.joined) return;
+    this.ctx?.resume?.().catch(() => {});
+    for (const p of this.peers.values()) if (p.audio.srcObject && p.audio.paused) p.audio.play().catch(() => {});
+    if (this.locked) {
+      this.locked = false;
+      this.emit();
+    }
   }
 
   // ───────── mic / loa ─────────
   async toggleMic() {
     if (!this.joined) return;
     if (this.noMic) {
-      // thử xin quyền lại
-      try {
-        this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-        this.noMic = false;
-        this.error = '';
-        this.muted = false;
-        this.localMeter = this.meter(this.stream);
-        for (const p of this.peers.values()) p.sender?.replaceTrack(this.stream.getAudioTracks()[0]);
-      } catch {
-        this.error = 'Trình duyệt vẫn chặn micro. Bấm vào biểu tượng ổ khóa cạnh địa chỉ web để cho phép.';
-      }
-    } else if (this.deafened) {
+      warnedNoMic = false;
+      await this.openMic();
+      if (this.noMic) this.error = 'Trình duyệt vẫn chặn micro. Bấm vào biểu tượng ổ khóa cạnh địa chỉ web để cho phép.';
+      else { this.error = ''; this.prefs.muted = false; this.rebuildChain(); }
+    } else if (this.prefs.deafened) {
       // đang tắt loa mà bấm mic: bật lại cả loa lẫn mic, như Discord
-      this.deafened = false;
-      this.muted = false;
+      this.prefs.deafened = false;
+      this.prefs.muted = false;
     } else {
-      this.muted = !this.muted;
+      this.prefs.muted = !this.prefs.muted;
     }
-    this.applyLocalTrack();
-    this.applyDeafen();
-    this.persist();
+    this.applyAll();
     await this.track();
-    this.emit();
   }
 
   async toggleSpeaker() {
     if (!this.joined) return;
-    this.deafened = !this.deafened;
-    this.applyDeafen();
+    this.prefs.deafened = !this.prefs.deafened;
+    this.applyAll();
+    await this.track();
+  }
+
+  applyAll() {
     this.applyLocalTrack();
-    this.persist();
+    for (const p of this.peers.values()) this.applyOutput(p.audio);
+    this.savePrefs();
+    this.emit();
+  }
+
+  applyOutput(audio) {
+    audio.muted = this.prefs.deafened;
+    audio.volume = Math.max(0, Math.min(1, this.prefs.outputVolume));
+    if (this.canPickOutput && (audio.sinkId || '') !== this.prefs.outputId) audio.setSinkId(this.prefs.outputId).catch(() => {});
+  }
+
+  // ───────── thiết bị & âm lượng ─────────
+  async listDevices() {
+    const all = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+    const pick = (kind) => all.filter((d) => d.kind === kind && d.deviceId !== 'default' && d.deviceId !== 'communications')
+      .map((d, i) => ({ id: d.deviceId, label: d.label || `${kind === 'audioinput' ? 'Micro' : 'Loa'} ${i + 1}` }));
+    return {
+      inputs: pick('audioinput'),
+      outputs: this.canPickOutput ? pick('audiooutput') : [],
+      inputId: this.prefs.inputId,
+      outputId: this.prefs.outputId,
+      inputGain: this.prefs.inputGain,
+      outputVolume: this.prefs.outputVolume,
+      canPickOutput: this.canPickOutput,
+    };
+  }
+
+  async setInput(deviceId) {
+    this.prefs.inputId = deviceId;
+    this.savePrefs();
+    if (!this.joined) return;
+    this.closeMic();
+    await this.openMic();
+    this.rebuildChain();
     await this.track();
     this.emit();
   }
 
-  /** Mic thật sự phát khi: có micro, không tắt mic, không tắt loa. */
-  get micLive() {
-    return !!this.stream && !this.muted && !this.deafened;
+  setOutput(deviceId) {
+    this.prefs.outputId = deviceId;
+    this.applyAll();
   }
 
-  applyLocalTrack() {
-    const t = this.stream?.getAudioTracks()[0];
-    if (t) t.enabled = this.micLive;
+  setInputGain(v) {
+    const was = this.prefs.inputGain;
+    this.prefs.inputGain = Math.max(0, Math.min(2, v));
+    this.savePrefs();
+    if (!this.joined) return;
+    if (this.chain && this.prefs.inputGain !== 1) this.chain.gain.gain.value = this.prefs.inputGain;
+    else if ((was === 1) !== (this.prefs.inputGain === 1) || !this.chain) this.rebuildChain();
   }
 
-  applyDeafen() {
-    for (const p of this.peers.values()) p.audio.muted = this.deafened;
+  setOutputVolume(v) {
+    this.prefs.outputVolume = Math.max(0, Math.min(1, v));
+    this.applyAll();
   }
 
-  persist() {
-    savePrefs({ muted: this.muted, deafened: this.deafened });
+  /** Mức tiếng micro hiện tại (0..1) để hiện thanh thử mic. */
+  inputLevel() {
+    return this.localMeter ? Math.min(1, this.localMeter.level() * 4 * this.prefs.inputGain) : 0;
   }
 
   track() {
@@ -204,7 +312,7 @@ export class VoiceChat {
     const me = this.getMe();
     return this.channel.track({
       id: me.id, name: me.name, picture: me.picture || '',
-      muted: !this.micLive, deafened: this.deafened, noMic: this.noMic,
+      muted: !this.micLive, deafened: this.prefs.deafened, noMic: this.noMic,
     }).catch(() => {});
   }
 
@@ -232,19 +340,17 @@ export class VoiceChat {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     const audio = new Audio();
     audio.autoplay = true;
-    audio.muted = this.deafened;
+    this.applyOutput(audio);
     const peer = { pc, audio, level: 0, pending: [], sender: null };
     // Bên gọi tạo sẵn kênh âm thanh; bên nhận dùng kênh do lời mời (offer) tạo ra, xem attachMic().
     if (caller) this.attachMic(peer, pc.addTransceiver('audio', { direction: 'sendrecv' }));
     pc.onicecandidate = (e) => { if (e.candidate) this.send(id, 'ice', e.candidate.toJSON()); };
     pc.ontrack = (e) => {
-      const stream = e.streams[0] || new MediaStream([e.track]);
-      audio.srcObject = stream;
-      audio.play().catch(() => {});
+      audio.srcObject = e.streams[0] || new MediaStream([e.track]);
+      audio.play().catch(() => { this.locked = true; this.emit(); });
     };
     pc.onconnectionstatechange = () => {
-      const s = pc.connectionState;
-      if (s === 'failed') {
+      if (pc.connectionState === 'failed') {
         this.dropPeer(id);
         const me = this.getMe().id;
         if (this.joined && me < id && this.members.has(id)) setTimeout(() => { if (this.joined && !this.peers.has(id) && this.members.has(id)) this.call(id); }, 1500);
@@ -258,7 +364,7 @@ export class VoiceChat {
   attachMic(peer, transceiver) {
     transceiver.direction = 'sendrecv';
     peer.sender = transceiver.sender;
-    const track = this.stream?.getAudioTracks()[0];
+    const track = this.sendTrack();
     if (track) transceiver.sender.replaceTrack(track);
   }
 
@@ -326,7 +432,6 @@ export class VoiceChat {
         for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
         return Math.sqrt(sum / buf.length);
       },
-      disconnect() { try { src.disconnect(); } catch { /* đã ngắt */ } },
     };
   }
 
@@ -347,13 +452,13 @@ export class VoiceChat {
     this.meterTimer = setInterval(async () => {
       const now = performance.now();
       const me = this.getMe()?.id;
-      if (this.localMeter && this.micLive && this.localMeter.level() > SPEAK_LEVEL) this.speaking.set(me, now);
+      if (this.localMeter && this.micLive && this.localMeter.level() * this.prefs.inputGain > SPEAK_LEVEL) this.speaking.set(me, now);
       if (!reading) {
         reading = true;
         await this.readRemoteLevels();
         reading = false;
       }
-      if (!this.deafened) for (const [id, p] of this.peers) if (p.level > REMOTE_SPEAK_LEVEL) this.speaking.set(id, now);
+      if (!this.prefs.deafened) for (const [id, p] of this.peers) if (p.level > REMOTE_SPEAK_LEVEL) this.speaking.set(id, now);
       const sig = [...this.speaking].filter(([, t]) => t > now - SPEAK_HOLD_MS).map(([id]) => id).sort().join(',');
       if (sig !== last) { last = sig; this.emit(); }
     }, 120);

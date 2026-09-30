@@ -32,7 +32,7 @@ function toast(msg, kind = '') {
 // ───────────────────────── cài đặt cá nhân ─────────────────────────
 const SETTINGS_KEY = 'rp-settings-v1';
 const settings = Object.assign(
-  { privacy: false, fourColor: false, back: 'red', sound: true, autoVoice: false, voiceRate: 1 },
+  { privacy: false, fourColor: false, back: 'red', sound: true, autoVoice: false, voiceRate: 1, autoVoiceChat: true },
   (() => { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; } })(),
 );
 const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* không sao */ } };
@@ -364,6 +364,7 @@ function openSettings() {
     <label class="check"><input type="checkbox" id="st-voice" ${settings.autoVoice ? 'checked' : ''}/><div><b>🔊 Tự đọc bài trên tay</b><small>Tự đọc 2 lá của bạn mỗi khi được chia bài</small></div></label>
     <div class="field"><span class="lbl">Tốc độ đọc</span>${segHTML('rate', [['0.8', 'Chậm'], ['1', 'Vừa'], ['1.25', 'Nhanh']], settings.voiceRate)}</div>
     <label class="check"><input type="checkbox" id="st-four" ${settings.fourColor ? 'checked' : ''}/><div><b>Bộ bài 4 màu</b><small>♠ đen · ♥ đỏ · ♦ xanh dương · ♣ xanh lá — dễ nhìn Thùng hơn</small></div></label>
+    <label class="check"><input type="checkbox" id="st-autovc" ${settings.autoVoiceChat ? 'checked' : ''}/><div><b>Tự vào voice khi vào bàn</b><small>Vào bàn là bật mic nói chuyện luôn. Tắt đi thì bấm "Vào voice" ở góc dưới khi cần.</small></div></label>
     <label class="check"><input type="checkbox" id="st-sound" ${settings.sound ? 'checked' : ''}/><div><b>Hiệu ứng âm thanh</b><small>Tiếng chia bài, chip, đến lượt…</small></div></label>
     <div class="field"><span class="lbl">Mặt sau lá bài</span>${segHTML('back', [['red', 'Đỏ'], ['blue', 'Xanh'], ['black', 'Đen']], settings.back)}</div>
     <div class="modal-actions">
@@ -375,6 +376,7 @@ function openSettings() {
     $('#st-voice', m).onchange = (e) => { settings.autoVoice = e.target.checked; apply(); };
     $('#st-four', m).onchange = (e) => { settings.fourColor = e.target.checked; apply(); };
     $('#st-sound', m).onchange = (e) => { settings.sound = e.target.checked; apply(); };
+    $('#st-autovc', m).onchange = (e) => { settings.autoVoiceChat = e.target.checked; saveSettings(); };
     bindSeg(m, 'rate', (v) => { settings.voiceRate = Number(v); apply(); });
     bindSeg(m, 'back', (v) => { settings.back = v; apply(); });
     $('#st-test', m).onclick = () => {
@@ -400,44 +402,65 @@ const VICON = {
   spk: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/></svg>',
   spkOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/><path class="slash" d="M4 4l16 16"/></svg>',
   leave: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 14.5c5-4.7 12-4.7 17 0l-2.2 2.3-3.3-1.4v-2.1a9 9 0 0 0-6 0v2.1l-3.3 1.4z"/></svg>',
+  caret: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14.5l5-5 5 5"/></svg>',
 };
 
 const voice = new VoiceChat(sb, () => ({ id: S.user?.id, name: S.profile?.name || 'Player', picture: S.profile?.picture || '' }), renderVoice);
 let voiceErrShown = '';
 
 function renderVoice(v) {
-  const ctl = $('#voice-ctl');
+  const bar = $('#voice-bar');
   const panel = $('#voice-panel');
-  if (!ctl || !panel) return;
+  if (!bar || !panel) return;
   const n = v.members.length;
   if (!v.room || !voice.supported) {
-    ctl.innerHTML = '';
+    bar.classList.add('hidden');
     panel.classList.add('hidden');
-  } else if (!v.joined) {
-    const sig = `out:${v.joining}:${n}`;
-    if (ctl.dataset.sig !== sig) {
-      ctl.dataset.sig = sig;
-      ctl.innerHTML = `<button class="btn btn-ghost btn-sm voice-join" ${v.joining ? 'disabled' : ''} title="Nói chuyện với mọi người ở bàn này">${VICON.spk}<span>${v.joining ? 'Đang vào…' : 'Vào voice'}${n ? ` · ${n}` : ''}</span></button>`;
-      $('.voice-join', ctl).onclick = () => voice.join();
-    }
-  } else {
-    const micOn = !v.muted && !v.deafened && !v.noMic;
-    const sig = `in:${micOn}:${v.deafened}:${v.noMic}`;
-    if (ctl.dataset.sig !== sig) {
-      ctl.dataset.sig = sig;
-      const micTitle = v.noMic ? 'Chưa dùng được micro — bấm để thử lại' : micOn ? 'Tắt mic' : 'Bật mic';
-      ctl.innerHTML = `
-        <button class="vbtn ${micOn ? '' : 'off'}" data-v="mic" title="${micTitle}" aria-label="${micTitle}" aria-pressed="${!micOn}">${micOn ? VICON.mic : VICON.micOff}</button>
-        <button class="vbtn ${v.deafened ? 'off' : ''}" data-v="spk" title="${v.deafened ? 'Bật loa' : 'Tắt loa'}" aria-label="${v.deafened ? 'Bật loa' : 'Tắt loa'}" aria-pressed="${v.deafened}">${v.deafened ? VICON.spkOff : VICON.spk}</button>
-        <button class="vbtn leave" data-v="leave" title="Rời voice" aria-label="Rời voice">${VICON.leave}</button>`;
-      $('[data-v="mic"]', ctl).onclick = () => voice.toggleMic();
-      $('[data-v="spk"]', ctl).onclick = () => voice.toggleSpeaker();
-      $('[data-v="leave"]', ctl).onclick = () => voice.leave();
-    }
+    closeVoiceMenu();
+    return;
   }
+  bar.classList.remove('hidden');
+
+  const me = v.members.find((m) => m.me);
+  const micOn = v.joined && !v.muted && !v.deafened && !v.noMic;
+  const status = !v.joined
+    ? (v.joining ? 'Đang vào voice…' : n ? `${n} người đang trong voice` : 'Chưa có ai trong voice')
+    : v.locked ? 'Bấm vào trang để nghe tiếng' : v.connecting ? 'Đang kết nối…' : 'Đã vào voice';
+  const good = v.joined && !v.locked && !v.connecting;
+  const sig = JSON.stringify([v.joined, v.joining, micOn, v.deafened, v.noMic, status, n, !!me?.speaking, S.profile?.name]);
+  if (bar.dataset.sig !== sig) {
+    bar.dataset.sig = sig;
+    const micTitle = v.noMic ? 'Chưa dùng được micro, bấm để thử lại' : micOn ? 'Tắt mic' : 'Bật mic';
+    const spkTitle = v.deafened ? 'Bật loa' : 'Tắt loa';
+    bar.innerHTML = `
+      <div class="vb-info">
+        <div class="vb-ava ${me?.speaking ? 'speaking' : ''}">${avatarHTML(S.profile?.name || '', S.profile?.picture || '')}</div>
+        <div class="vb-text"><b>${v.joined ? `Voice · ${n} người` : 'Voice của bàn'}</b><small class="${good ? 'ok' : ''}">${status}</small></div>
+      </div>
+      <div class="vb-btns">${v.joined ? `
+        <div class="vgroup">
+          <button class="vbtn ${micOn ? '' : 'off'}" data-v="mic" title="${micTitle}" aria-label="${micTitle}" aria-pressed="${!micOn}">${micOn ? VICON.mic : VICON.micOff}</button>
+          <button class="vcaret" data-v="menu-in" title="Chọn micro, âm lượng mic" aria-label="Chọn micro" aria-haspopup="menu">${VICON.caret}</button>
+        </div>
+        <div class="vgroup">
+          <button class="vbtn ${v.deafened ? 'off' : ''}" data-v="spk" title="${spkTitle}" aria-label="${spkTitle}" aria-pressed="${v.deafened}">${v.deafened ? VICON.spkOff : VICON.spk}</button>
+          <button class="vcaret" data-v="menu-out" title="Chọn loa / tai nghe, âm lượng" aria-label="Chọn loa" aria-haspopup="menu">${VICON.caret}</button>
+        </div>
+        <button class="vbtn leave" data-v="leave" title="Rời voice" aria-label="Rời voice">${VICON.leave}</button>`
+      : `<button class="btn btn-gold btn-sm vb-join" data-v="join" ${v.joining ? 'disabled' : ''}>${v.joining ? 'Đang vào…' : 'Vào voice'}</button>`}
+      </div>`;
+    const on = (k, fn) => { const b = $(`[data-v="${k}"]`, bar); if (b) b.onclick = fn; };
+    on('join', () => voice.join());
+    on('mic', () => voice.toggleMic());
+    on('spk', () => voice.toggleSpeaker());
+    on('leave', () => { closeVoiceMenu(); voice.leave(); });
+    on('menu-in', (e) => toggleVoiceMenu('in', e.currentTarget));
+    on('menu-out', (e) => toggleVoiceMenu('out', e.currentTarget));
+  }
+  if (!v.joined) closeVoiceMenu();
 
   // danh sách người trong voice (cột bên phải)
-  if (v.room && n) {
+  if (n) {
     panel.classList.remove('hidden');
     panel.innerHTML = `<div class="vp-head"><span class="dot ${v.joined ? 'live' : ''}"></span>Voice · ${n} người</div>
       <ul>${v.members.map((m) => `<li class="${m.speaking ? 'speaking' : ''}">
@@ -445,7 +468,7 @@ function renderVoice(v) {
         <span class="vp-name">${esc(m.name)}${m.me ? ' <small>(bạn)</small>' : ''}</span>
         <span class="vp-state">${m.deafened ? VICON.spkOff : m.muted ? VICON.micOff : ''}</span>
       </li>`).join('')}</ul>`;
-  } else if (v.room) {
+  } else {
     panel.classList.add('hidden');
   }
 
@@ -460,6 +483,66 @@ function renderVoice(v) {
   if (v.error && v.error !== voiceErrShown) { voiceErrShown = v.error; toast(v.error, 'err'); }
   if (!v.error) voiceErrShown = '';
 }
+
+// ── menu chọn thiết bị (mũi tên cạnh nút mic / tai nghe) ──
+let voiceMenu = null; // { kind, el, timer, anchor }
+
+function closeVoiceMenu() {
+  if (!voiceMenu) return;
+  clearInterval(voiceMenu.timer);
+  voiceMenu.el.remove();
+  voiceMenu.anchor?.classList.remove('open');
+  voiceMenu = null;
+}
+
+async function toggleVoiceMenu(kind, anchor) {
+  if (voiceMenu?.kind === kind) { closeVoiceMenu(); return; }
+  closeVoiceMenu();
+  const d = await voice.listDevices();
+  const el = document.createElement('div');
+  el.className = 'voice-menu';
+  el.setAttribute('role', 'menu');
+  const opts = (list, current) => [{ id: '', label: 'Mặc định của máy' }, ...list]
+    .map((x) => `<button class="vm-opt ${x.id === current ? 'on' : ''}" data-id="${esc(x.id)}" role="menuitemradio" aria-checked="${x.id === current}">${esc(x.label)}</button>`).join('');
+  if (kind === 'in') {
+    const g = Math.round(d.inputGain * 100);
+    el.innerHTML = `<h4>Micro</h4>
+      <div class="vm-list">${opts(d.inputs, d.inputId)}</div>
+      <label class="vm-range"><span>Âm lượng mic <b id="vm-val">${g}%</b></span><input type="range" id="vm-vol" min="0" max="200" step="5" value="${g}" /></label>
+      <div class="vm-meter" aria-hidden="true"><i id="vm-level"></i></div>
+      <small class="vm-hint">Nói thử: thanh xanh nhảy là mic đang nhận tiếng.</small>`;
+  } else {
+    const vol = Math.round(d.outputVolume * 100);
+    const list = !d.canPickOutput ? '<p class="vm-hint">Trình duyệt này không cho chọn loa, tiếng phát ra loa mặc định của máy.</p>'
+      : d.outputs.length ? `<div class="vm-list">${opts(d.outputs, d.outputId)}</div>` : '<p class="vm-hint">Không đọc được danh sách loa của máy.</p>';
+    el.innerHTML = `<h4>Loa / tai nghe</h4>${list}
+      <label class="vm-range"><span>Âm lượng <b id="vm-val">${vol}%</b></span><input type="range" id="vm-vol" min="0" max="100" step="5" value="${vol}" /></label>`;
+  }
+  document.body.append(el);
+  const r = anchor.closest('.vgroup').getBoundingClientRect();
+  el.style.left = `${Math.max(8, Math.min(r.left, innerWidth - el.offsetWidth - 8))}px`;
+  el.style.bottom = `${innerHeight - r.top + 8}px`;
+  anchor.classList.add('open');
+
+  el.querySelectorAll('.vm-opt').forEach((b) => (b.onclick = async () => {
+    el.querySelectorAll('.vm-opt').forEach((o) => { o.classList.toggle('on', o === b); o.setAttribute('aria-checked', String(o === b)); });
+    if (kind === 'in') await voice.setInput(b.dataset.id);
+    else voice.setOutput(b.dataset.id);
+  }));
+  const range = $('#vm-vol', el);
+  range.oninput = () => {
+    $('#vm-val', el).textContent = `${range.value}%`;
+    if (kind === 'in') voice.setInputGain(range.value / 100);
+    else voice.setOutputVolume(range.value / 100);
+  };
+  const timer = kind === 'in' ? setInterval(() => { const l = $('#vm-level', el); if (l) l.style.width = `${Math.round(voice.inputLevel() * 100)}%`; }, 80) : 0;
+  voiceMenu = { kind, el, timer, anchor };
+}
+
+document.addEventListener('pointerdown', (e) => {
+  if (voiceMenu && !voiceMenu.el.contains(e.target) && !e.target.closest('.vcaret')) closeVoiceMenu();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeVoiceMenu(); });
 
 function leaveTable() {
   clearTimeout(S.tickTimer);
@@ -482,6 +565,7 @@ async function enterTable(id) {
   S.tableId = id;
   S.lastServerTime = 0;
   voice.setRoom(id);
+  if (settings.autoVoiceChat) voice.join();
   show('table');
   $('#tt-name').textContent = 'Đang vào bàn…';
   $('#tt-sub').textContent = '';
