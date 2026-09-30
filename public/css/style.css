@@ -534,7 +534,17 @@ input, select { font: inherit; color: inherit; }
   display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; vertical-align: 1px;
   background: var(--gold-grad); color: #2a1c00; font-size: 9.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; line-height: 16px;
 }
-.seat .plate .nm .role-admin { margin-left: 4px; font-size: 8.5px; line-height: 14px; }
+/* ở bàn: dải ADMIN trên ảnh đại diện (không nằm trong tên, để tên dài bị cắt cũng không mất) */
+.seat .ava-wrap .admin-ribbon {
+  position: absolute; left: 50%; top: -8px; transform: translateX(-50%); z-index: 4;
+  padding: 0 7px; border-radius: 999px; background: var(--gold-grad); color: #2a1c00;
+  font-size: 9px; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; line-height: 15px; white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,.55), 0 0 12px rgba(226,183,90,.5);
+}
+.seat .ava-wrap.is-admin .avatar {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px rgba(247,224,138,.3), 0 0 22px rgba(226,183,90,.4), 0 6px 18px rgba(0,0,0,.5);
+}
 
 /* ───────── voice chat ───────── */
 .bottom-row { display: flex; align-items: flex-end; gap: 10px; padding-left: 12px; }

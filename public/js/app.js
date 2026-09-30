@@ -754,8 +754,8 @@ function renderSeat(i, v, prev) {
     body.innerHTML = `
       <div class="pod">
         ${tag}
-        <div class="ava-wrap"><div class="ring"></div>${avatarHTML(p.name, p.picture)}</div>
-        <div class="plate"><div class="nm">${esc(p.name)}${adminTag(p.userId)}</div><div class="st">${p.stack > 0 || v.match.active ? fmt(p.stack) : '—'}</div></div>
+        <div class="ava-wrap ${S.admins.has(p.userId) ? 'is-admin' : ''}"><div class="ring"></div>${avatarHTML(p.name, p.picture)}${S.admins.has(p.userId) ? '<span class="admin-ribbon">Admin</span>' : ''}</div>
+        <div class="plate"><div class="nm">${esc(p.name)}</div><div class="st">${p.stack > 0 || v.match.active ? fmt(p.stack) : '—'}</div></div>
       </div>
       <div class="badges">${badges.join('')}</div>
       ${done && p.handName ? `<div class="hand-name">${esc(p.handName)}</div>` : ''}
