@@ -4,6 +4,7 @@ import { cardFace, cardBack, chipStack } from './cards.js';
 import { speak, holeCardsSpeech, voiceSupported, hasVietnameseVoice } from './voice.js';
 import { sfx, setSfxEnabled } from './sfx.js';
 import { betModel } from './betting.js';
+import { VoiceChat } from './voicechat.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -392,10 +393,79 @@ function rerenderAll() {
 // ───────────────────────── bàn chơi ─────────────────────────
 const nowServer = () => Date.now() + S.offset;
 
+// ───────────────────────── voice chat ─────────────────────────
+const VICON = {
+  mic: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>',
+  micOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/><path class="slash" d="M4 4l16 16"/></svg>',
+  spk: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/></svg>',
+  spkOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/><path class="slash" d="M4 4l16 16"/></svg>',
+  leave: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 14.5c5-4.7 12-4.7 17 0l-2.2 2.3-3.3-1.4v-2.1a9 9 0 0 0-6 0v2.1l-3.3 1.4z"/></svg>',
+};
+
+const voice = new VoiceChat(sb, () => ({ id: S.user?.id, name: S.profile?.name || 'Player', picture: S.profile?.picture || '' }), renderVoice);
+let voiceErrShown = '';
+
+function renderVoice(v) {
+  const ctl = $('#voice-ctl');
+  const panel = $('#voice-panel');
+  if (!ctl || !panel) return;
+  const n = v.members.length;
+  if (!v.room || !voice.supported) {
+    ctl.innerHTML = '';
+    panel.classList.add('hidden');
+  } else if (!v.joined) {
+    const sig = `out:${v.joining}:${n}`;
+    if (ctl.dataset.sig !== sig) {
+      ctl.dataset.sig = sig;
+      ctl.innerHTML = `<button class="btn btn-ghost btn-sm voice-join" ${v.joining ? 'disabled' : ''} title="Nói chuyện với mọi người ở bàn này">${VICON.spk}<span>${v.joining ? 'Đang vào…' : 'Vào voice'}${n ? ` · ${n}` : ''}</span></button>`;
+      $('.voice-join', ctl).onclick = () => voice.join();
+    }
+  } else {
+    const micOn = !v.muted && !v.deafened && !v.noMic;
+    const sig = `in:${micOn}:${v.deafened}:${v.noMic}`;
+    if (ctl.dataset.sig !== sig) {
+      ctl.dataset.sig = sig;
+      const micTitle = v.noMic ? 'Chưa dùng được micro — bấm để thử lại' : micOn ? 'Tắt mic' : 'Bật mic';
+      ctl.innerHTML = `
+        <button class="vbtn ${micOn ? '' : 'off'}" data-v="mic" title="${micTitle}" aria-label="${micTitle}" aria-pressed="${!micOn}">${micOn ? VICON.mic : VICON.micOff}</button>
+        <button class="vbtn ${v.deafened ? 'off' : ''}" data-v="spk" title="${v.deafened ? 'Bật loa' : 'Tắt loa'}" aria-label="${v.deafened ? 'Bật loa' : 'Tắt loa'}" aria-pressed="${v.deafened}">${v.deafened ? VICON.spkOff : VICON.spk}</button>
+        <button class="vbtn leave" data-v="leave" title="Rời voice" aria-label="Rời voice">${VICON.leave}</button>`;
+      $('[data-v="mic"]', ctl).onclick = () => voice.toggleMic();
+      $('[data-v="spk"]', ctl).onclick = () => voice.toggleSpeaker();
+      $('[data-v="leave"]', ctl).onclick = () => voice.leave();
+    }
+  }
+
+  // danh sách người trong voice (cột bên phải)
+  if (v.room && n) {
+    panel.classList.remove('hidden');
+    panel.innerHTML = `<div class="vp-head"><span class="dot ${v.joined ? 'live' : ''}"></span>Voice · ${n} người</div>
+      <ul>${v.members.map((m) => `<li class="${m.speaking ? 'speaking' : ''}">
+        <span class="vp-ava">${avatarHTML(m.name, m.picture)}</span>
+        <span class="vp-name">${esc(m.name)}${m.me ? ' <small>(bạn)</small>' : ''}</span>
+        <span class="vp-state">${m.deafened ? VICON.spkOff : m.muted ? VICON.micOff : ''}</span>
+      </li>`).join('')}</ul>`;
+  } else if (v.room) {
+    panel.classList.add('hidden');
+  }
+
+  // vòng sáng quanh ghế của người đang nói
+  const byId = new Map(v.members.map((m) => [m.id, m]));
+  for (const el of S.seatEls) {
+    const m = byId.get(el.dataset.uid);
+    const st = !m ? '' : m.speaking ? 'speaking' : m.deafened || m.muted ? 'muted' : 'on';
+    if (el.dataset.voice !== st) el.dataset.voice = st;
+  }
+
+  if (v.error && v.error !== voiceErrShown) { voiceErrShown = v.error; toast(v.error, 'err'); }
+  if (!v.error) voiceErrShown = '';
+}
+
 function leaveTable() {
   clearTimeout(S.tickTimer);
   clearInterval(S.pollTimer);
   if (S.channel) { sb.removeChannel(S.channel); S.channel = null; }
+  voice.setRoom(null);
   S.tableId = null;
   S.view = null;
   $('#seats').innerHTML = '';
@@ -411,6 +481,7 @@ async function enterTable(id) {
   leaveTable();
   S.tableId = id;
   S.lastServerTime = 0;
+  voice.setRoom(id);
   show('table');
   $('#tt-name').textContent = 'Đang vào bàn…';
   $('#tt-sub').textContent = '';
@@ -554,6 +625,7 @@ function renderSeat(i, v, prev) {
   const acting = !!h && h.phase === 'betting' && h.toAct === i;
   const done = h?.phase === 'done';
   const matchOut = p && v.match.active && (p.place > 0 || p.waiting);
+  el.dataset.uid = p?.userId || '';
 
   el.className = ['seat', p ? '' : 'empty', isMe ? 'me' : '', acting ? 'acting' : '',
     p?.folded ? 'folded' : '', p && done && p.winner ? 'winner' : '', matchOut ? 'out' : '',
@@ -1066,6 +1138,7 @@ function renderTable(prev, v, force = false) {
   buildSeats(v);
   renderHeader(v);
   for (let i = 0; i < v.settings.maxSeats; i++) renderSeat(i, v, prev);
+  renderVoice(voice.snapshot()); // ghế có thể vừa dựng lại hoặc đổi người ngồi
   renderBoard(v, prev);
   renderPotAndBanners(v);
   renderBets(v, prev);
