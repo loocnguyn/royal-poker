@@ -50,6 +50,7 @@ const S = {
   preFold: false, preFoldHand: 0, peek: false,
   dockKey: '', dismissedMatch: 0, celebratedMatch: 0,
   lastTickSec: -1, spokenKey: '',
+  admins: new Set(), // id các tài khoản admin (bảng hub_profiles, client chỉ đọc được)
 };
 
 // ───────────────────────── API ─────────────────────────
@@ -113,6 +114,7 @@ async function onSignedIn(session) {
   if (S.booted && S.user?.id === session.user.id) return;
   S.booted = true;
   S.user = session.user;
+  loadAdmins();
   try {
     const r = await api('me');
     S.profile = r.profile;
@@ -157,11 +159,19 @@ async function track(where) {
   try { await S.presence.track({ id: S.user.id, name: S.profile.name, avatar: S.profile.picture, ...where }); } catch { /* chưa kết nối */ }
 }
 
+async function loadAdmins() {
+  const { data } = await sb.from('hub_profiles').select('id').eq('role', 'admin');
+  S.admins = new Set((data || []).map((r) => r.id));
+  rerenderAll();
+  renderVoice(voice.snapshot());
+}
+const adminTag = (id) => (S.admins.has(id) ? '<span class="role-admin">Admin</span>' : '');
+
 function onlineListHTML() {
   if (!S.online.length) return '<li class="empty" style="padding:10px">Chưa có ai</li>';
   return S.online.map((u) => `
     <li>${avatarHTML(u.name, u.avatar)}
-      <div class="who"><b>${esc(u.name)}${u.id === S.user?.id ? ' (bạn)' : ''}</b>
+      <div class="who"><b>${esc(u.name)}${adminTag(u.id)}${u.id === S.user?.id ? ' (bạn)' : ''}</b>
       <small>${u.tableId ? `🃏 <a href="#/t/${esc(u.tableId)}" style="color:inherit">${esc(u.where)}</a>` : '🏛 Sảnh chờ'}</small></div>
       <span class="dot live"></span></li>`).join('');
 }
@@ -465,7 +475,7 @@ function renderVoice(v) {
     panel.innerHTML = `<div class="vp-head"><span class="dot ${v.joined ? 'live' : ''}"></span>Voice · ${n} người</div>
       <ul>${v.members.map((m) => `<li class="${m.speaking ? 'speaking' : ''}">
         <span class="vp-ava">${avatarHTML(m.name, m.picture)}</span>
-        <span class="vp-name">${esc(m.name)}${m.me ? ' <small>(bạn)</small>' : ''}</span>
+        <span class="vp-name">${esc(m.name)}${adminTag(m.id)}${m.me ? ' <small>(bạn)</small>' : ''}</span>
         <span class="vp-state">${m.deafened ? VICON.spkOff : m.muted ? VICON.micOff : ''}</span>
       </li>`).join('')}</ul>`;
   } else {
@@ -737,7 +747,7 @@ function renderSeat(i, v, prev) {
   if (!v.match.active && p.rematch && v.match.over) badges.push('<span class="badge ready">✓ Sẵn sàng</span>');
 
   const showWon = done && p.won > 0;
-  const sig = JSON.stringify([p.name, p.picture, p.stack, p.lastAction, badges, showWon ? p.won : 0, h?.id, p.handName, done]);
+  const sig = JSON.stringify([p.name, p.picture, p.stack, p.lastAction, badges, showWon ? p.won : 0, h?.id, p.handName, done, S.admins.has(p.userId)]);
   if (S.seatSig[i] !== sig) {
     S.seatSig[i] = sig;
     const tag = p.lastAction ? `<span class="act-tag ${actClass(p.lastAction)}">${esc(actLabel(p.lastAction))}</span>` : '';
@@ -745,7 +755,7 @@ function renderSeat(i, v, prev) {
       <div class="pod">
         ${tag}
         <div class="ava-wrap"><div class="ring"></div>${avatarHTML(p.name, p.picture)}</div>
-        <div class="plate"><div class="nm">${esc(p.name)}</div><div class="st">${p.stack > 0 || v.match.active ? fmt(p.stack) : '—'}</div></div>
+        <div class="plate"><div class="nm">${esc(p.name)}${adminTag(p.userId)}</div><div class="st">${p.stack > 0 || v.match.active ? fmt(p.stack) : '—'}</div></div>
       </div>
       <div class="badges">${badges.join('')}</div>
       ${done && p.handName ? `<div class="hand-name">${esc(p.handName)}</div>` : ''}

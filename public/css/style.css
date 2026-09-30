@@ -529,6 +529,13 @@ input, select { font: inherit; color: inherit; }
   .tt-name { font-size: 14px; }
   .table-top .icon-btn { padding: 6px 8px; }
 }
+/* ───────── quyền tài khoản ───────── */
+.role-admin {
+  display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; vertical-align: 1px;
+  background: var(--gold-grad); color: #2a1c00; font-size: 9.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; line-height: 16px;
+}
+.seat .plate .nm .role-admin { margin-left: 4px; font-size: 8.5px; line-height: 14px; }
+
 /* ───────── voice chat ───────── */
 .bottom-row { display: flex; align-items: flex-end; gap: 10px; padding-left: 12px; }
 .bottom-row .dock { flex: 1; min-width: 0; }
